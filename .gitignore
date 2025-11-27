@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+
+# Virtual environments
+.venv/
+**/.venv/
+
+# Uploads / generated data
+uploads/
+uploadsimport/
+seeds/
+
+# OS / editor junk
+.os/
+.DS_Store
