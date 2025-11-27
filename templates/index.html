@@ -3,62 +3,227 @@
 <head>
     <meta charset="UTF-8">
     <title>Seed Counter</title>
+
+    <!-- PWA manifest (safe to leave even if PWA not fully wired yet) -->
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#2c3e50">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Seed Counter">
+    <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
+
     <style>
         body {
-            font-family: Arial, sans-serif;
-            max-width: 600px;
-            margin: 40px auto;
-            padding: 0 15px;
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 1.5rem;
+            background: #f7f7f7;
         }
-        h1 {
-            text-align: center;
+        h1, h2 {
+            color: #2c3e50;
         }
-        .container {
-            border: 1px solid #ddd;
+        .card {
+            background: #ffffff;
             border-radius: 8px;
-            padding: 20px;
-        }
-        .result {
-            margin-top: 20px;
-            font-size: 1.4em;
-            font-weight: bold;
-            text-align: center;
+            padding: 1.2rem 1.5rem;
+            margin-bottom: 1.2rem;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.06);
         }
         .error {
-            margin-top: 20px;
-            color: red;
-            text-align: center;
+            color: #d63031;
+            margin-bottom: 0.5rem;
         }
-        input[type="file"] {
-            margin-top: 10px;
+        .seed-count {
+            font-size: 1.1rem;
+            margin-bottom: 0.5rem;
+        }
+        label {
+            display: block;
+            margin-bottom: 0.5rem;
+        }
+        input[type="number"],
+        input[type="file"],
+        select {
+            width: 100%;
+            padding: 0.4rem 0.5rem;
+            margin-top: 0.2rem;
+            box-sizing: border-box;
         }
         button {
-            margin-top: 10px;
-            padding: 8px 16px;
+            background: #2c3e50;
+            color: white;
+            border: none;
+            padding: 0.5rem 1.2rem;
+            border-radius: 4px;
             cursor: pointer;
+            margin-top: 0.6rem;
+        }
+        button:hover {
+            background: #34495e;
+        }
+        .calc-result {
+            margin-top: 0.7rem;
+            font-weight: 600;
+        }
+        .small-text {
+            font-size: 0.85rem;
+            color: #555;
+        }
+        .hint {
+            font-size: 0.85rem;
+            color: #777;
+            margin-top: 0.2rem;
         }
     </style>
 </head>
 <body>
     <h1>Seed Counter</h1>
-    <div class="container">
-        <form method="post" enctype="multipart/form-data">
-            <label for="image">Choose a photo of seeds (on a plain background):</label><br>
-            <input type="file" name="image" id="image" accept="image/*" required><br>
-            <button type="submit">Upload & Count</button>
-        </form>
+
+    <!-- Seed counting card -->
+    <div class="card">
+        {% if error %}
+            <div class="error">{{ error }}</div>
+        {% endif %}
 
         {% if seed_count is not none %}
-            <div class="result">
-                Estimated seeds: {{ seed_count }}
+            <div class="seed-count">
+                Detected seed count: <strong>{{ seed_count }}</strong>
             </div>
         {% endif %}
 
-        {% if error %}
-            <div class="error">
-                {{ error }}
-            </div>
-        {% endif %}
+        <form method="post" enctype="multipart/form-data">
+            <label for="image">
+                Upload image of seeds:
+                <input type="file" name="image" id="image" accept="image/*">
+            </label>
+            <button type="submit">Count seeds</button>
+        </form>
     </div>
+
+    <!-- Seeding rate calculator card -->
+    <div class="card">
+        <h2>Seeding rate calculator</h2>
+        <p class="small-text">
+            After counting seeds and weighing 1000, use this to estimate a seeding rate
+            for your target plants/m² and germination.
+        </p>
+
+        <label>
+            Crop
+            <select id="crop" onchange="setDefaultsForCrop()">
+                <option value="wheat">Wheat</option>
+                <option value="barley">Barley</option>
+                <option value="lentils">Lentils</option>
+                <option value="canola">Canola</option>
+            </select>
+        </label>
+        <div id="crop_hint" class="hint"></div>
+
+        <label>
+            1000-seed weight (g)
+            <input type="number" id="tsw" step="0.1" min="0">
+        </label>
+
+        <label>
+            Target plants per m²
+            <input type="number" id="target_plants" step="1" min="0">
+        </label>
+
+        <label>
+            Germination (%)
+            <input type="number" id="germ" step="0.1" min="1" max="100" value="95">
+        </label>
+
+        <button type="button" onclick="calculateSeedingRate()">Calculate seeding rate</button>
+
+        <div id="calc_output" class="calc-result"></div>
+        <p class="small-text">
+            Formula used: kg/ha = (target plants/m² × 1000-seed weight (g)) ÷ germination %.
+        </p>
+    </div>
+
+    <script>
+      const cropDefaults = {
+        wheat: {
+          target: 180,
+          hint: "Typical target: 150–220 plants/m² depending on season, variety and environment."
+        },
+        barley: {
+          target: 140,
+          hint: "Typical target: 120–200 plants/m². Often a bit lower than wheat."
+        },
+        lentils: {
+          target: 120,
+          hint: "Typical target: 100–180 plants/m² depending on variety and row spacing."
+        },
+        canola: {
+          target: 50,
+          hint: "Typical target: 30–80 plants/m². Higher for hybrids in good conditions."
+        }
+      };
+
+      function setDefaultsForCrop() {
+        const cropSelect = document.getElementById('crop');
+        const targetInput = document.getElementById('target_plants');
+        const hintDiv = document.getElementById('crop_hint');
+
+        const crop = cropSelect.value;
+        const settings = cropDefaults[crop];
+
+        if (settings) {
+          // Only overwrite if user hasn't already typed something
+          if (!targetInput.value) {
+            targetInput.value = settings.target;
+          }
+          hintDiv.textContent = settings.hint;
+        } else {
+          hintDiv.textContent = "";
+        }
+      }
+
+      function calculateSeedingRate() {
+        const tswInput = document.getElementById('tsw');
+        const targetInput = document.getElementById('target_plants');
+        const germInput = document.getElementById('germ');
+        const output = document.getElementById('calc_output');
+
+        const tsw = parseFloat(tswInput.value);
+        const target = parseFloat(targetInput.value);
+        const germ = parseFloat(germInput.value);
+
+        if (isNaN(tsw) || tsw <= 0) {
+          output.textContent = "Enter a valid 1000-seed weight (g).";
+          return;
+        }
+        if (isNaN(target) || target <= 0) {
+          output.textContent = "Enter a valid target plants per m².";
+          return;
+        }
+        if (isNaN(germ) || germ <= 0 || germ > 100) {
+          output.textContent = "Enter a germination percentage between 1 and 100.";
+          return;
+        }
+
+        // kg/ha = (target plants/m² × TSW (g)) / germination %
+        const kgPerHa = (target * tsw) / germ;
+
+        output.textContent =
+          "Recommended seeding rate: " + kgPerHa.toFixed(1) + " kg/ha";
+      }
+
+      // Initialise defaults on page load
+      window.addEventListener('load', setDefaultsForCrop);
+
+      // (Optional) simple PWA service worker registration – safe to leave
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', function () {
+          navigator.serviceWorker.register('/service-worker.js')
+            .catch(function (err) {
+              console.log('Service worker registration failed:', err);
+            });
+        });
+      }
+    </script>
 </body>
 </html>
