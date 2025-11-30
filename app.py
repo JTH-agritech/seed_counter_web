@@ -92,6 +92,7 @@ def count_seeds(image_path: str, crop: str) -> int:
 
     os.makedirs("uploads", exist_ok=True)
     if DEBUG_MODE:
+<<<<<<< HEAD
         os.makedirs("uploads", exist_ok=True)
         cv2.imwrite(os.path.join("uploads", "debug_last.jpg"), debug)
 
