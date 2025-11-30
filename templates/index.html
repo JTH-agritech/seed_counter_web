@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <title>Seed Counter</title>
 
-    <!-- PWA manifest (safe to leave even if PWA not fully wired yet) -->
+    <!-- PWA manifest (optional but harmless) -->
     <link rel="manifest" href="/manifest.json">
     <meta name="theme-color" content="#2c3e50">
     <meta name="apple-mobile-web-app-capable" content="yes">
@@ -75,33 +75,75 @@
             color: #777;
             margin-top: 0.2rem;
         }
+        .top-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.8rem;
+        }
+        .top-bar a {
+            font-size: 0.85rem;
+            color: #2c3e50;
+            text-decoration: none;
+        }
+        .top-bar a:hover {
+            text-decoration: underline;
+        }
     </style>
 </head>
 <body>
-    <h1>Seed Counter</h1>
-
-    <!-- Seed counting card -->
-    <div class="card">
-        {% if error %}
-            <div class="error">{{ error }}</div>
-        {% endif %}
-
-        {% if seed_count is not none %}
-            <div class="seed-count">
-                Detected seed count: <strong>{{ seed_count }}</strong>
-            </div>
-        {% endif %}
-
-        <form method="post" enctype="multipart/form-data">
-            <label for="image">
-                Upload image of seeds:
-                <input type="file" name="image" id="image" accept="image/*">
-            </label>
-            <button type="submit">Count seeds</button>
-        </form>
+    <div class="top-bar">
+        <h1>Seed Counter</h1>
+        <a href="/logout">Logout</a>
     </div>
 
-    <!-- Seeding rate calculator card -->
+    <!-- Seed counting / multi-image total -->
+
+<div class="card">
+    {% if error %}
+        <div class="error">{{ error }}</div>
+    {% endif %}
+
+    {% if seed_count is not none %}
+        <div class="seed-count">
+            Last image seed count: <strong>{{ seed_count }}</strong>
+        </div>
+    {% endif %}
+
+    <div class="seed-count">
+        Total seeds across all images this session:
+        <strong>{{ total_seeds or 0 }}</strong>
+    </div>
+
+    <!-- Form to choose crop + upload image -->
+    <form method="post" enctype="multipart/form-data" style="margin-top: 0.8rem;">
+        <label>
+            Crop for counting
+            <select name="crop">
+                <option value="wheat"   {% if current_crop == 'wheat' %}selected{% endif %}>Wheat</option>
+                <option value="barley"  {% if current_crop == 'barley' %}selected{% endif %}>Barley</option>
+                <option value="lentils" {% if current_crop == 'lentils' %}selected{% endif %}>Lentils</option>
+                <option value="canola"  {% if current_crop == 'canola' %}selected{% endif %}>Canola</option>
+            </select>
+        </label>
+
+        <label for="image">
+            Upload image of seeds:
+            <input type="file" name="image" id="image" accept="image/*">
+        </label>
+        <button type="submit">Add image to total</button>
+    </form>
+
+    <!-- Separate form to clear all counts (keeps current crop) -->
+    <form method="post" style="margin-top: 0.5rem;">
+        <input type="hidden" name="reset" value="1">
+        <input type="hidden" name="crop" value="{{ current_crop }}">
+        <button type="submit">Clear all counts</button>
+    </form>
+</div>
+
+
+    <!-- Seeding rate calculator -->
     <div class="card">
         <h2>Seeding rate calculator</h2>
         <p class="small-text">
@@ -172,7 +214,6 @@
         const settings = cropDefaults[crop];
 
         if (settings) {
-          // Only overwrite if user hasn't already typed something
           if (!targetInput.value) {
             targetInput.value = settings.target;
           }
@@ -205,17 +246,13 @@
           return;
         }
 
-        // kg/ha = (target plants/m² × TSW (g)) / germination %
         const kgPerHa = (target * tsw) / germ;
-
         output.textContent =
           "Recommended seeding rate: " + kgPerHa.toFixed(1) + " kg/ha";
       }
 
-      // Initialise defaults on page load
       window.addEventListener('load', setDefaultsForCrop);
 
-      // (Optional) simple PWA service worker registration – safe to leave
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', function () {
           navigator.serviceWorker.register('/service-worker.js')

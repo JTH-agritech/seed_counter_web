@@ -1,100 +1,197 @@
-import os
-from flask import Flask, render_template, request
+from flask import Flask, render_template, request, send_from_directory, session, redirect, url_for
+from werkzeug.utils import secure_filename
 import cv2
+import os
 import numpy as np
 
+# Per-crop contour area limits (in pixels)
+# These are starting points – you can tune each crop with a test image.
+CROP_AREA_LIMITS = {
+    "wheat":   (200, 10000),   # larger, elongated grains
+    "barley":  (520, 9000),   # similar to wheat, slightly smaller
+    "lentils": (15, 3000),    # tuned from your test image
+    "canola":  (60, 2500),     # small, round seed
+}
+
+DEFAULT_CROP = "lentils"
+
+# Minimum circularity per crop (0–1). 0 = no circularity filtering.
+# Round seeds = higher values, elongated grains = low/zero.
+CROP_MIN_CIRCULARITY = {
+    "wheat":   0.05,   # allow elongated shapes
+    "barley":  0.02,
+    "lentils": 0.0,   # fairly round
+    "canola":  0.3,   # very round, small
+}
+
 app = Flask(__name__)
-app.config["UPLOAD_FOLDER"] = "uploads"
 
-# Make sure upload folder exists
-os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
+# CHANGE THIS to something private before you give anyone access
+app.secret_key = "CHANGE_THIS_TO_SOMETHING_RANDOM"
 
-def count_seeds(image_path):
-    img = cv2.imread(image_path)
-    if img is None:
+# Simple access code for Option C
+ACCESS_CODE = "westcoast"  # change this to whatever you want to give clients
+
+def count_seeds(image_path: str, crop: str) -> int:
+    """
+    Count seeds using adaptive thresholding + contour area + circularity.
+    Uses per-crop presets for area and circularity.
+    """
+    image = cv2.imread(image_path)
+    if image is None:
         return 0
 
-    # Resize to keep things manageable and consistent
-    h, w = img.shape[:2]
-    max_dim = 800
-    scale = max_dim / max(h, w)
-    if scale < 1.0:  # only shrink, don't enlarge
-        img = cv2.resize(img, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+    # Get crop-specific limits
+    min_area, max_area = CROP_AREA_LIMITS.get(crop, CROP_AREA_LIMITS[DEFAULT_CROP])
+    min_circ = CROP_MIN_CIRCULARITY.get(crop, 0.0)
 
     # Grayscale + blur
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     blur = cv2.GaussianBlur(gray, (5, 5), 0)
 
-    # Try both "seeds darker" and "seeds lighter"
-    _, th_inv = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-    _, th     = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY     + cv2.THRESH_OTSU)
+    # Single adaptive-threshold setting for all crops
+    C_value = 10
 
-    inv_ratio = np.mean(th_inv == 255)
-    ratio     = np.mean(th == 255)
+    thresh = cv2.adaptiveThreshold(
+        blur,
+        255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY_INV,
+        51,
+        C_value,
+    )
 
-    # We roughly expect seeds to cover some fraction of the image.
-    target = 0.25
-    if abs(inv_ratio - target) < abs(ratio - target):
-        mask = th_inv
-    else:
-        mask = th
-
-    # Clean up small noise
+    # Morphological clean-up
     kernel = np.ones((3, 3), np.uint8)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
+    thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=2)
 
-    # Label connected components
-    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(mask, connectivity=8)
+    # Find contours
+    contours, _ = cv2.findContours(
+        thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+    )
 
-    if num_labels <= 1:
-        return 0  # only background found
+    seed_count = 0
+    debug = image.copy()
 
-    # stats[0] = background, ignore it
-    areas = stats[1:, cv2.CC_STAT_AREA].astype(np.float32)
+    for cnt in contours:
+        area = cv2.contourArea(cnt)
+        perim = cv2.arcLength(cnt, True)
 
-    # Drop very tiny specks (noise)
-    min_area = 15  # tweak this if needed
-    areas = areas[areas >= min_area]
-    if areas.size == 0:
-        return 0
+        if perim == 0:
+            circ = 0.0
+        else:
+            circ = (4 * np.pi * area) / (perim * perim)
 
-    # Typical single-seed area
-    median_area = float(np.median(areas))
+        if (min_area <= area <= max_area) and (circ >= min_circ):
+            seed_count += 1
+            cv2.drawContours(debug, [cnt], -1, (0, 255, 0), 2)  # counted
+        else:
+            cv2.drawContours(debug, [cnt], -1, (0, 0, 255), 1)  # rejected
 
-    # Overall seed area
-    total_area = float(np.sum(areas))
+    os.makedirs("uploads", exist_ok=True)
+    cv2.imwrite(os.path.join("uploads", "debug_last.jpg"), debug)
 
-    # Raw estimate = total area / typical seed area
-    raw_estimate = total_area / median_area
+    return int(seed_count)
 
-    # Fudge factor: <1.0 to bring high counts down, >1.0 to push low counts up
-    fudge_factor = 0.37  # start with 0.8 since you're currently getting too many
 
-    seeds = int(round(raw_estimate * fudge_factor))
-    return max(seeds, 0)
+def is_authenticated() -> bool:
+    return bool(session.get("authenticated"))
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    # Already logged in → go straight to main page
+    if is_authenticated():
+        return redirect(url_for("index"))
+
+    error = None
+    if request.method == "POST":
+        code = request.form.get("access_code", "").strip()
+        if code == ACCESS_CODE:
+            session["authenticated"] = True
+            # Reset counts when logging in
+            session["seed_counts"] = []
+            return redirect(url_for("index"))
+        else:
+            error = "Incorrect access code."
+
+    return render_template("login.html", error=error)
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
 
 
 @app.route("/", methods=["GET", "POST"])
 def index():
-    seed_count = None
+    # Require login
+    if not is_authenticated():
+        return redirect(url_for("login"))
+
+    # Seed counts across multiple images
+    if "seed_counts" not in session:
+        session["seed_counts"] = []
+
+    # Current crop for counting
+    if "current_crop" not in session:
+        session["current_crop"] = DEFAULT_CROP
+
+    error = None
+    last_seed_count = None
+
     if request.method == "POST":
-        if "image" not in request.files:
-            return render_template("index.html", seed_count=None, error="No file part")
+        # Update crop choice if provided
+        form_crop = request.form.get("crop")
+        if form_crop in CROP_AREA_LIMITS:
+            session["current_crop"] = form_crop
 
-        file = request.files["image"]
+        # Clear counts
+        if "reset" in request.form:
+            session["seed_counts"] = []
+        else:
+            # Normal image upload
+            file = request.files.get("image")
+            if not file or file.filename == "":
+                error = "Please upload an image."
+            else:
+                filename = secure_filename(file.filename)
+                os.makedirs("uploads", exist_ok=True)
+                upload_path = os.path.join("uploads", filename)
+                file.save(upload_path)
 
-        if file.filename == "":
-            return render_template("index.html", seed_count=None, error="No selected file")
+                try:
+                    current_crop = session.get("current_crop", DEFAULT_CROP)
+                    seed_count = count_seeds(upload_path, current_crop)
+                    last_seed_count = seed_count
+                    session["seed_counts"].append(int(seed_count))
+                except Exception as e:
+                    error = f"Error processing image: {e}"
 
-        # Save uploaded file
-        filepath = os.path.join(app.config["UPLOAD_FOLDER"], file.filename)
-        file.save(filepath)
+    total_seeds = sum(session.get("seed_counts", []))
+    current_crop = session.get("current_crop", DEFAULT_CROP)
 
-        # Count seeds
-        seed_count = count_seeds(filepath)
+    return render_template(
+        "index.html",
+        seed_count=last_seed_count,
+        total_seeds=total_seeds,
+        current_crop=current_crop,
+        error=error,
+    )
 
-    return render_template("index.html", seed_count=seed_count, error=None)
+
+# PWA bits: manifest + service worker (safe to leave even if not fully used yet)
+@app.route("/manifest.json")
+def manifest():
+    return send_from_directory("static", "manifest.json")
+
+
+@app.route("/service-worker.js")
+def service_worker():
+    return send_from_directory("static", "service-worker.js")
 
 
 if __name__ == "__main__":
+    # For local testing
     app.run(debug=True)
