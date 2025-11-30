@@ -4,6 +4,8 @@ import cv2
 import os
 import numpy as np
 
+DEBUG_MODE = os.environ.get("DEBUG_MODE", "1") == "1"
+
 # Per-crop contour area limits (in pixels)
 # These are starting points – you can tune each crop with a test image.
 CROP_AREA_LIMITS = {
@@ -88,6 +90,8 @@ def count_seeds(image_path: str, crop: str) -> int:
         else:
             cv2.drawContours(debug, [cnt], -1, (0, 0, 255), 1)  # rejected
 
+    os.makedirs("uploads", exist_ok=True)
+    if DEBUG_MODE:
     os.makedirs("uploads", exist_ok=True)
     cv2.imwrite(os.path.join("uploads", "debug_last.jpg"), debug)
 
