@@ -86,38 +86,52 @@ def count_seeds(image_path: str, crop: str) -> int:
     raw_min, raw_max = CROP_AREA_LIMITS.get(crop, CROP_AREA_LIMITS["wheat"])
     raw_circ = CROP_MIN_CIRCULARITY.get(crop, 0.0)
 
+    # --- CROP-SPECIFIC BASE FLOORS FOR MOBILE (pixel areas) ---
+    # These are approximate area floors for a single seed at MOBILE_REF size.
+    if crop == "lentils":
+        base_mobile_min = 150.0
+    elif crop == "canola":
+        base_mobile_min = 80.0
+    elif crop in ("wheat", "barley"):
+        base_mobile_min = 400.0
+    else:
+        base_mobile_min = 100.0
+
     # --- MOBILE VS DESKTOP BRANCHES ---
     if is_mobile:
         # Mobile images: smaller & noisier → need stronger cleaning
         dim_scale = max_dim / MOBILE_REF
         scale_factor = dim_scale ** 2
 
-        # Boost min area and circularity for mobile to kill fragments
-        min_area = raw_min * 1.8 * scale_factor       # 80% stricter
-        max_area = raw_max * 1.1 * scale_factor       # allow a bit larger
-        min_circ = raw_circ + 0.08                    # rounder shapes only
+        # Start from the configured min/max, but enforce a per-crop floor
+        min_area = raw_min * 1.8 * scale_factor
+        min_area_floor = base_mobile_min * scale_factor
+        min_area = max(min_area, min_area_floor)
 
-        blur_size = 11                                # stronger blur
-        kernel_size = 5                               # bigger morphology kernel
-        mobile_close_iters = 2                        # merge split blobs
+        max_area = raw_max * 1.1 * scale_factor
+        min_circ = raw_circ + 0.08  # rounder shapes only
+
+        blur_size = 11                 # stronger blur for mobile
+        kernel_size = 5
+        close_iters = 2                # merge split blobs
         open_iters = 1
-
     else:
-    # Desktop images: cleaner → lighter filtering, but avoid merging nearby lentils
-    dim_scale = max_dim / DESKTOP_REF
-    scale_factor = dim_scale ** 2
+        # Desktop images: cleaner → lighter filtering, avoid merging nearby seeds
+        dim_scale = max_dim / DESKTOP_REF
+        scale_factor = dim_scale ** 2
 
-    min_area = raw_min * scale_factor
-    max_area = raw_max * 1.2 * scale_factor  # allow slightly bigger blobs
-    min_circ = raw_circ
+        min_area = raw_min * scale_factor
+        max_area = raw_max * 1.2 * scale_factor
+        min_circ = raw_circ
 
-    blur_size = 5
-    kernel_size = 3
-    mobile_close_iters = 0
-    open_iters = 1  # was 2 – fewer OPEN iterations so we don't merge neighbours
-    if crop == "lentils":
-        min_area *= 0.85
+        # Slightly relax lentil min area on desktop so small seeds aren't dropped
+        if crop == "lentils":
+            min_area *= 0.85
 
+        blur_size = 5
+        kernel_size = 3
+        close_iters = 0
+        open_iters = 1
 
     # --- PROCESSING ---
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
@@ -137,11 +151,11 @@ def count_seeds(image_path: str, crop: str) -> int:
     # Morphological cleaning
     kernel = np.ones((kernel_size, kernel_size), np.uint8)
 
-    # On mobile, first CLOSE to merge fragments
-    if mobile_close_iters > 0:
-        thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=mobile_close_iters)
+    # For mobile, first CLOSE to merge fragments
+    if close_iters > 0:
+        thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=close_iters)
 
-    # Then OPEN on both to remove noise
+    # Then OPEN on both to remove small noise
     thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=open_iters)
 
     # --- CONTOURS ---
@@ -167,7 +181,7 @@ def count_seeds(image_path: str, crop: str) -> int:
         else:
             cv2.drawContours(debug, [cnt], -1, (0, 0, 255), 1)
 
-    # Save debug image (optional)
+    # Save debug image
     if DEBUG_MODE:
         os.makedirs("uploads", exist_ok=True)
         cv2.imwrite(os.path.join("uploads", "debug_last.jpg"), debug)
