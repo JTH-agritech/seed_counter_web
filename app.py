@@ -101,19 +101,23 @@ def count_seeds(image_path: str, crop: str) -> int:
         kernel_size = 5                               # bigger morphology kernel
         mobile_close_iters = 2                        # merge split blobs
         open_iters = 1
+
     else:
-        # Desktop images: cleaner → lighter filtering
-        dim_scale = max_dim / DESKTOP_REF
-        scale_factor = dim_scale ** 2
+    # Desktop images: cleaner → lighter filtering, but avoid merging nearby lentils
+    dim_scale = max_dim / DESKTOP_REF
+    scale_factor = dim_scale ** 2
 
-        min_area = raw_min * scale_factor
-        max_area = raw_max * scale_factor
-        min_circ = raw_circ
+    min_area = raw_min * scale_factor
+    max_area = raw_max * 1.2 * scale_factor  # allow slightly bigger blobs
+    min_circ = raw_circ
 
-        blur_size = 5
-        kernel_size = 3
-        mobile_close_iters = 0
-        open_iters = 2
+    blur_size = 5
+    kernel_size = 3
+    mobile_close_iters = 0
+    open_iters = 1  # was 2 – fewer OPEN iterations so we don't merge neighbours
+    if crop == "lentils":
+        min_area *= 0.85
+
 
     # --- PROCESSING ---
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
