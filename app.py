@@ -128,9 +128,9 @@ def count_seeds(image_path: str, crop: str) -> int:
         if crop == "lentils":
             min_area *= 0.85
 
-        blur_size = 5
+        blur_size = 8
         kernel_size = 3
-        close_iters = 0
+        close_iters = 1
         open_iters = 1
 
     # --- PROCESSING ---
