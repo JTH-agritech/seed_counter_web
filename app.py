@@ -64,6 +64,10 @@ def detect_mobile_image(image_path: str, width: int, height: int) -> bool:
     return False
 
 def count_seeds(image_path: str, crop: str) -> int:
+    """
+    Count seeds using adaptive thresholding + contour area + circularity.
+    Includes automatic mobile/desktop detection and per-crop tuning.
+    """
     image = cv2.imread(image_path)
     if image is None:
         return 0
@@ -71,28 +75,38 @@ def count_seeds(image_path: str, crop: str) -> int:
     h, w = image.shape[:2]
     max_dim = float(max(h, w))
 
-    # Detect mobile vs desktop
+    # --- AUTO-DETECT MOBILE ---
     is_mobile = detect_mobile_image(image_path, w, h)
 
-    # Reference dimensions
+    # Reference sizes used for scaling area thresholds
     MOBILE_REF = 2000.0
     DESKTOP_REF = 3500.0
 
+    # --- CROP DEFAULT LIMITS ---
+    raw_min, raw_max = CROP_AREA_LIMITS.get(crop, CROP_AREA_LIMITS["wheat"])
+    raw_circ = CROP_MIN_CIRCULARITY.get(crop, 0.0)
+
+    # --- MOBILE VS DESKTOP BRANCHES ---
     if is_mobile:
+        # Mobile images smaller & noisier
         scale_factor = (max_dim / MOBILE_REF) ** 2
+
+        # strengthen mobile-specific filters
+        min_area = raw_min * 1.6 * scale_factor      # 60% more strict
+        max_area = raw_max * scale_factor
+        min_circ = raw_circ + 0.05                   # slightly rounder
+        blur_size = 7                                # heavier blur
     else:
         scale_factor = (max_dim / DESKTOP_REF) ** 2
 
-    # Apply scaled area thresholds
-    raw_min, raw_max = CROP_AREA_LIMITS.get(crop, CROP_AREA_LIMITS["wheat"])
-    min_area = raw_min * scale_factor
-    max_area = raw_max * scale_factor
+        min_area = raw_min * scale_factor
+        max_area = raw_max * scale_factor
+        min_circ = raw_circ
+        blur_size = 5
 
-    min_circ = CROP_MIN_CIRCULARITY.get(crop, 0.0)
-
-    # Grayscale + blur
+    # --- PROCESSING ---
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+    blur = cv2.GaussianBlur(gray, (blur_size, blur_size), 0)
 
     # Adaptive threshold
     C_value = 10
@@ -105,9 +119,11 @@ def count_seeds(image_path: str, crop: str) -> int:
         C_value,
     )
 
+    # Morphological cleaning
     kernel = np.ones((3, 3), np.uint8)
     thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=2)
 
+    # --- CONTOURS ---
     contours, _ = cv2.findContours(
         thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
     )
@@ -130,6 +146,7 @@ def count_seeds(image_path: str, crop: str) -> int:
         else:
             cv2.drawContours(debug, [cnt], -1, (0, 0, 255), 1)
 
+    # Save debug image (optional)
     if DEBUG_MODE:
         os.makedirs("uploads", exist_ok=True)
         cv2.imwrite(os.path.join("uploads", "debug_last.jpg"), debug)
