@@ -87,9 +87,9 @@ def count_seeds(image_path: str, crop: str) -> int:
     raw_circ = CROP_MIN_CIRCULARITY.get(crop, 0.0)
 
     # --- CROP-SPECIFIC BASE FLOORS FOR MOBILE (pixel areas) ---
-    # These are approximate area floors for a single seed at MOBILE_REF size.
+    # Approximate area floors for a single seed at MOBILE_REF size.
     if crop == "lentils":
-        base_mobile_min = 150.0
+        base_mobile_min = 170.0
     elif crop == "canola":
         base_mobile_min = 80.0
     elif crop in ("wheat", "barley"):
@@ -103,7 +103,7 @@ def count_seeds(image_path: str, crop: str) -> int:
         dim_scale = max_dim / MOBILE_REF
         scale_factor = dim_scale ** 2
 
-        # Start from the configured min/max, but enforce a per-crop floor
+        # Start from configured min/max, but enforce a per-crop floor
         min_area = raw_min * 1.8 * scale_factor
         min_area_floor = base_mobile_min * scale_factor
         min_area = max(min_area, min_area_floor)
@@ -111,9 +111,9 @@ def count_seeds(image_path: str, crop: str) -> int:
         max_area = raw_max * 1.1 * scale_factor
         min_circ = raw_circ + 0.08  # rounder shapes only
 
-        blur_size = 11                 # stronger blur for mobile
+        blur_size = 11              # stronger blur for mobile
         kernel_size = 5
-        close_iters = 2                # merge split blobs
+        close_iters = 2             # merge split blobs
         open_iters = 1
     else:
         # Desktop images: cleaner → lighter filtering, avoid merging nearby seeds
@@ -121,17 +121,21 @@ def count_seeds(image_path: str, crop: str) -> int:
         scale_factor = dim_scale ** 2
 
         min_area = raw_min * scale_factor
-        max_area = raw_max * 1.2 * scale_factor
+        max_area = raw_max * 1.4 * scale_factor   # allow slightly larger blobs
         min_circ = raw_circ
 
-        # Slightly relax lentil min area on desktop so small seeds aren't dropped
+        # Lentil-specific tuning on desktop
         if crop == "lentils":
-            min_area *= 0.85
+            min_area *= 0.35      # accept smaller lentils
+            max_area *= 1.6      # accept small clusters
+            min_circ = 0.05       # don't be fussy about shape
+            open_iters = 0.04       # avoid eroding/merging lentils
+        else:
+            open_iters = 1       # default for other crops
 
-        blur_size = 8
+        blur_size = 5
         kernel_size = 3
-        close_iters = 1
-        open_iters = 1
+        close_iters = 0
 
     # --- PROCESSING ---
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
@@ -187,6 +191,7 @@ def count_seeds(image_path: str, crop: str) -> int:
         cv2.imwrite(os.path.join("uploads", "debug_last.jpg"), debug)
 
     return int(seed_count)
+
 
 def is_authenticated() -> bool:
     return bool(session.get("authenticated"))
