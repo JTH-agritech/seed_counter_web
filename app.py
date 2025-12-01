@@ -183,6 +183,16 @@ def logout():
     session.clear()
     return redirect(url_for("login"))
 
+@app.route("/debug")
+def debug_image():
+    if not DEBUG_MODE:
+        return "Debug mode disabled", 403
+
+    debug_path = os.path.join("uploads", "debug_last.jpg")
+    if not os.path.exists(debug_path):
+        return "No debug image yet.", 404
+
+    return send_from_directory("uploads", "debug_last.jpg")
 
 @app.route("/", methods=["GET", "POST"])
 def index():

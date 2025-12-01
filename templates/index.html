@@ -274,6 +274,22 @@
                 </div>
             </div>
 
+            {% if seed_count is not none and error is none and config.DEBUG_MODE %}
+            <div style="margin: 0.5rem 0 0.8rem;">
+                <a href="{{ url_for('debug_image') }}" target="_blank"
+                   style="
+                       background: #444;
+                       color: #fff;
+                       padding: 0.5rem 1rem;
+                       border-radius: 6px;
+                       text-decoration: none;
+                       font-size: 0.9rem;
+                   ">
+                    View Debug Image
+                </a>
+            </div>
+            {% endif %}
+
             <form method="post" enctype="multipart/form-data">
                 <label>
                     Crop for this image
