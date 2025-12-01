@@ -4,6 +4,8 @@ import cv2
 import os
 import numpy as np
 
+from PIL import Image, ExifTags
+
 DEBUG_MODE = os.environ.get("DEBUG_MODE", "1") == "1"
 
 # Per-crop contour area limits (in pixels)
@@ -34,26 +36,66 @@ app.secret_key = "CHANGE_THIS_TO_SOMETHING_RANDOM"
 # Simple access code for Option C
 ACCESS_CODE = "westcoast"  # change this to whatever you want to give clients
 
+def detect_mobile_image(image_path: str, width: int, height: int) -> bool:
+    """
+    Detect whether an image likely came from a mobile device.
+    """
+    max_dim = max(width, height)
+    
+    # 1. Check resolution
+    if max_dim < 2600:
+        return True
+
+    # 2. Try EXIF metadata
+    try:
+        image = Image.open(image_path)
+        exif = image._getexif()
+        if exif:
+            for k, v in ExifTags.TAGS.items():
+                if v == "Make":
+                    make_key = k
+                    break
+            camera_make = exif.get(make_key, "").lower()
+            if any(x in camera_make for x in ["apple", "iphone", "samsung", "pixel", "huawei"]):
+                return True
+    except Exception:
+        pass
+
+    return False
+
 def count_seeds(image_path: str, crop: str) -> int:
-    """
-    Count seeds using adaptive thresholding + contour area + circularity.
-    Uses per-crop presets for area and circularity.
-    """
     image = cv2.imread(image_path)
     if image is None:
         return 0
 
-    # Get crop-specific limits
-    min_area, max_area = CROP_AREA_LIMITS.get(crop, CROP_AREA_LIMITS[DEFAULT_CROP])
+    h, w = image.shape[:2]
+    max_dim = float(max(h, w))
+
+    # Detect mobile vs desktop
+    is_mobile = detect_mobile_image(image_path, w, h)
+
+    # Reference dimensions
+    MOBILE_REF = 2000.0
+    DESKTOP_REF = 3500.0
+
+    if is_mobile:
+        scale_factor = (max_dim / MOBILE_REF) ** 2
+    else:
+        scale_factor = (max_dim / DESKTOP_REF) ** 2
+
+    # Apply scaled area thresholds
+    raw_min, raw_max = CROP_AREA_LIMITS.get(crop, CROP_AREA_LIMITS["wheat"])
+    min_area = raw_min * scale_factor
+    max_area = raw_max * scale_factor
+
     min_circ = CROP_MIN_CIRCULARITY.get(crop, 0.0)
 
     # Grayscale + blur
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     blur = cv2.GaussianBlur(gray, (5, 5), 0)
 
-    # Single adaptive-threshold setting for all crops
+    # Adaptive threshold
     C_value = 10
-
     thresh = cv2.adaptiveThreshold(
         blur,
         255,
@@ -63,11 +105,9 @@ def count_seeds(image_path: str, crop: str) -> int:
         C_value,
     )
 
-    # Morphological clean-up
     kernel = np.ones((3, 3), np.uint8)
     thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=2)
 
-    # Find contours
     contours, _ = cv2.findContours(
         thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
     )
@@ -86,11 +126,10 @@ def count_seeds(image_path: str, crop: str) -> int:
 
         if (min_area <= area <= max_area) and (circ >= min_circ):
             seed_count += 1
-            cv2.drawContours(debug, [cnt], -1, (0, 255, 0), 2)  # counted
+            cv2.drawContours(debug, [cnt], -1, (0, 255, 0), 2)
         else:
-            cv2.drawContours(debug, [cnt], -1, (0, 0, 255), 1)  # rejected
+            cv2.drawContours(debug, [cnt], -1, (0, 0, 255), 1)
 
-    os.makedirs("uploads", exist_ok=True)
     if DEBUG_MODE:
         os.makedirs("uploads", exist_ok=True)
         cv2.imwrite(os.path.join("uploads", "debug_last.jpg"), debug)
