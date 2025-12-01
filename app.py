@@ -88,21 +88,32 @@ def count_seeds(image_path: str, crop: str) -> int:
 
     # --- MOBILE VS DESKTOP BRANCHES ---
     if is_mobile:
-        # Mobile images smaller & noisier
-        scale_factor = (max_dim / MOBILE_REF) ** 2
+        # Mobile images: smaller & noisier → need stronger cleaning
+        dim_scale = max_dim / MOBILE_REF
+        scale_factor = dim_scale ** 2
 
-        # strengthen mobile-specific filters
-        min_area = raw_min * 1.6 * scale_factor      # 60% more strict
-        max_area = raw_max * scale_factor
-        min_circ = raw_circ + 0.05                   # slightly rounder
-        blur_size = 7                                # heavier blur
+        # Boost min area and circularity for mobile to kill fragments
+        min_area = raw_min * 1.8 * scale_factor       # 80% stricter
+        max_area = raw_max * 1.1 * scale_factor       # allow a bit larger
+        min_circ = raw_circ + 0.08                    # rounder shapes only
+
+        blur_size = 11                                # stronger blur
+        kernel_size = 5                               # bigger morphology kernel
+        mobile_close_iters = 2                        # merge split blobs
+        open_iters = 1
     else:
-        scale_factor = (max_dim / DESKTOP_REF) ** 2
+        # Desktop images: cleaner → lighter filtering
+        dim_scale = max_dim / DESKTOP_REF
+        scale_factor = dim_scale ** 2
 
         min_area = raw_min * scale_factor
         max_area = raw_max * scale_factor
         min_circ = raw_circ
+
         blur_size = 5
+        kernel_size = 3
+        mobile_close_iters = 0
+        open_iters = 2
 
     # --- PROCESSING ---
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
@@ -120,8 +131,14 @@ def count_seeds(image_path: str, crop: str) -> int:
     )
 
     # Morphological cleaning
-    kernel = np.ones((3, 3), np.uint8)
-    thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=2)
+    kernel = np.ones((kernel_size, kernel_size), np.uint8)
+
+    # On mobile, first CLOSE to merge fragments
+    if mobile_close_iters > 0:
+        thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=mobile_close_iters)
+
+    # Then OPEN on both to remove noise
+    thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=open_iters)
 
     # --- CONTOURS ---
     contours, _ = cv2.findContours(
@@ -152,7 +169,6 @@ def count_seeds(image_path: str, crop: str) -> int:
         cv2.imwrite(os.path.join("uploads", "debug_last.jpg"), debug)
 
     return int(seed_count)
-
 
 def is_authenticated() -> bool:
     return bool(session.get("authenticated"))
